@@ -113,21 +113,21 @@ local function OverworldItems()
 		TEXT_X = 4,
 		TEXT_RIGHT_PADDING = 4,
 		HEADER_Y = 4,
-		SUMMARY_Y = 36,
-		EMPTY_LIST_Y = 76,
-		ROWS_PER_PAGE = 3,
+		SUMMARY_Y = 29,
+		EMPTY_LIST_Y = 55,
+		ROWS_PER_PAGE = 4,
 		ROW_X = 3,
 		ROW_RIGHT_PADDING = 3,
-		ROW_START_Y = 70,
-		ROW_PITCH = 22,
-		ROW_HEIGHT = 21,
+		ROW_START_Y = 55,
+		ROW_PITCH = 20,
+		ROW_HEIGHT = 19,
 		ROW_LOCATION_OFFSET_Y = 10,
 		TAB_Y = 17,
 		TAB_WIDTH = 62,
 		TAB_HEIGHT = 9,
 		LEFT_CONTROL_X = 4,
 		RIGHT_CONTROL_X = 74,
-		FILTER_Y = 51,
+		FILTER_Y = 42,
 		CHECKBOX_SIZE = 7,
 		CHECKBOX_CLICK_OFFSET_Y = -2,
 		CHECKBOX_CLICK_WIDTH = 66,
@@ -734,11 +734,14 @@ local function OverworldItems()
 					local mark = collected == nil and "[?]" or (collected and "[x]" or "[ ]")
 					text(mark .. " " .. itemName(item), offsetY, collected and "Positive text" or "Default text")
 					local mapName = self.getRouteInfo(item.mapId).name
-					if route.area and route.area.name then
-						local prefix = route.area.name .. " "
-						if mapName:sub(1, #prefix) == prefix then mapName = mapName:sub(#prefix + 1) end
+					local location = string.format("(%d,%d)", item.x, item.y)
+					if mapName ~= title then
+						if route.area and route.area.name then
+							local prefix = route.area.name .. " "
+							if mapName:sub(1, #prefix) == prefix then mapName = mapName:sub(#prefix + 1) end
+						end
+						location = mapName .. " " .. location
 					end
-					local location = string.format("%s (%s,%s)", mapName, item.x, item.y)
 					if item.spawnChance then location = string.format("%s%% %s", item.spawnChance, location) end
 					text(location, offsetY + UI_LAYOUT.ROW_LOCATION_OFFSET_Y, "Intermediate text")
 				end
