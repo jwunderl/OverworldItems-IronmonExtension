@@ -159,6 +159,21 @@ local function OverworldItems()
 		TRAINER_ROW_GAP = 3,
 	}
 
+	local OPTIONS_LAYOUT = {
+		WIDTH = 350,
+		HEIGHT = 140,
+		CONTROL_X = 12,
+		CHECKBOX_Y = 18,
+		CHECKBOX_WIDTH = 310,
+		BUTTON_Y = 65,
+		BUTTON_HEIGHT = 24,
+		SAVE_WIDTH = 60,
+		OPEN_X = 80,
+		OPEN_WIDTH = 150,
+		CANCEL_X = 238,
+		CANCEL_WIDTH = 80,
+	}
+
 	local GUIDANCE_ARROW = {
 		CENTER_X = 10,
 		CENTER_Y = 83,
@@ -308,7 +323,7 @@ local function OverworldItems()
 			return nil
 		end
 		local value = Memory.readbyte(saveBlock + GameSettings.gameFlagsOffset +
-		math.floor(flagId / SAVE_DATA.BITS_PER_BYTE))
+			math.floor(flagId / SAVE_DATA.BITS_PER_BYTE))
 		return math.floor(value / 2 ^ (flagId % SAVE_DATA.BITS_PER_BYTE)) % 2 == 1
 	end
 
@@ -546,14 +561,14 @@ local function OverworldItems()
 		if #watchedItems == 0 then return end
 		local player = Program.getPlayerMapTile()
 		local renewableSteps = Memory.readword(Utils.getSaveBlock1Addr() + GameSettings.gameVarsOffset +
-		SAVE_DATA.RENEWABLE_STEPS_VAR_OFFSET)
+			SAVE_DATA.RENEWABLE_STEPS_VAR_OFFSET)
 		for _, item in ipairs(watchedItems) do
 			local flag = self.readPickupFlag(item.flagId)
 			local distance = math.abs(player.x - item.x) + math.abs(player.y - item.y)
 			local scriptFlag = Memory.readword(GameSettings.gSpecialVar_Result + SAVE_DATA
-			.HIDDEN_FLAG_FROM_RESULT_OFFSET)
+				.HIDDEN_FLAG_FROM_RESULT_OFFSET)
 			local scriptSuccess = Memory.readword(GameSettings.gSpecialVar_Result +
-			SAVE_DATA.HIDDEN_SUCCESS_FROM_RESULT_OFFSET)
+				SAVE_DATA.HIDDEN_SUCCESS_FROM_RESULT_OFFSET)
 			if mapId == item.mapId and flag == true and lastFlags[item.flagId] == false
 				and renewableSteps == lastRenewableSteps and scriptSuccess == SAVE_DATA.SCRIPT_SUCCESS
 				and distance <= SAVE_DATA.PICKUP_RANGE_TILES and scriptFlag == item.flagId and not observedPickups[item.flagId] then
@@ -567,8 +582,13 @@ local function OverworldItems()
 	end
 
 	local screen = {
-		Buttons = {}, rows = {}, page = 1, floorOnly = false, missingOnly = false,
-		rowsPerPage = UI_LAYOUT.ROWS_PER_PAGE, rowPitch = UI_LAYOUT.ROW_PITCH,
+		Buttons = {},
+		rows = {},
+		page = 1,
+		floorOnly = false,
+		missingOnly = false,
+		rowsPerPage = UI_LAYOUT.ROWS_PER_PAGE,
+		rowPitch = UI_LAYOUT.ROW_PITCH,
 	}
 	self.Screen = screen
 	local originalBuild
@@ -576,6 +596,7 @@ local function OverworldItems()
 	local itemTab
 	local trainerTab
 	local lastGuidance
+	local hideFoundNames = false
 
 	function self.getItemGuidance(item)
 		if Program.currentScreen ~= screen or not item or not Program.isValidMapLocation()
@@ -641,7 +662,7 @@ local function OverworldItems()
 	end
 
 	local function itemName(item)
-		if not self.wasCollectedInGame(item) then return item.kind .. " item" end
+		if hideFoundNames or not self.wasCollectedInGame(item) then return item.kind .. " item" end
 		if item.itemId == RULES.COINS_ITEM_ID then return string.format("Coins x%s", item.quantity) end
 		local name = TrackerAPI.getItemName(item.itemId)
 		if not name or name == "" then name = "Item #" .. item.itemId end
@@ -804,7 +825,8 @@ local function OverworldItems()
 					local location = itemContext(item, route, title)
 					if location ~= "" then
 						Drawing.drawText(startX + UI_LAYOUT.TEXT_X, startY + offsetY + UI_LAYOUT.ROW_LOCATION_OFFSET_Y,
-							Utils.shortenText(location, coordinateRight - startX - UI_LAYOUT.TEXT_X - UI_LAYOUT.TEXT_ELLIPSIS_GAP, true),
+							Utils.shortenText(location,
+								coordinateRight - startX - UI_LAYOUT.TEXT_X - UI_LAYOUT.TEXT_ELLIPSIS_GAP, true),
 							colors["Intermediate text"], shadow)
 					end
 				end
@@ -819,6 +841,7 @@ local function OverworldItems()
 
 	function self.startup()
 		if originalBuild or GameSettings.game ~= RULES.FRLG_GAME_ID then return end
+		hideFoundNames = TrackerAPI.getExtensionSetting("OverworldItems", "HideFoundNames") == true
 		local startX = Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN
 		local startY = Constants.SCREEN.MARGIN
 		local width = Constants.SCREEN.RIGHT_GAP - Constants.SCREEN.MARGIN * 2
@@ -877,7 +900,8 @@ local function OverworldItems()
 			end
 		end
 		trainerTab = tab("Trainers", UI_LAYOUT.LEFT_CONTROL_X, TrainersOnRouteScreen, function() end)
-		itemTab = tab("Items", UI_LAYOUT.RIGHT_CONTROL_X, screen, function() self.open(TrainersOnRouteScreen.Data.routeId) end)
+		itemTab = tab("Items", UI_LAYOUT.RIGHT_CONTROL_X, screen,
+			function() self.open(TrainersOnRouteScreen.Data.routeId) end)
 		TrainersOnRouteScreen.Buttons.OverworldItemsTrainers = trainerTab
 		TrainersOnRouteScreen.Buttons.OverworldItemsItems = itemTab
 		screen.Buttons.Trainers = tab("Trainers", UI_LAYOUT.LEFT_CONTROL_X, TrainersOnRouteScreen, showTrainers)
@@ -927,8 +951,10 @@ local function OverworldItems()
 					startX + UI_LAYOUT.ROW_X, startY + UI_LAYOUT.ROW_START_Y + (slot - 1) * screen.rowPitch,
 					width - UI_LAYOUT.ROW_X - UI_LAYOUT.ROW_RIGHT_PADDING, screen.rowPitch - UI_LAYOUT.ROW_GAP,
 				},
-				isVisible = function() return slot <= screen.rowsPerPage and not screen.selected and
-					screen.rows[(screen.page - 1) * screen.rowsPerPage + slot] ~= nil end,
+				isVisible = function()
+					return slot <= screen.rowsPerPage and not screen.selected and
+						screen.rows[(screen.page - 1) * screen.rowsPerPage + slot] ~= nil
+				end,
 				onClick = function()
 					screen.selected = screen.rows[(screen.page - 1) * screen.rowsPerPage + slot]
 					screen.Buttons.Collected.toggleState = self.isCollected(screen.selected)
@@ -999,7 +1025,37 @@ local function OverworldItems()
 	end
 
 	function self.configureOptions()
-		self.open(TrackerAPI.getMapId())
+		if not Main.IsOnBizhawk() then
+			self.open(TrackerAPI.getMapId())
+			return
+		end
+		Program.destroyActiveForm()
+		local form = forms.newform(OPTIONS_LAYOUT.WIDTH, OPTIONS_LAYOUT.HEIGHT, "Overworld Items Settings",
+			function() client.unpause() end)
+		Utils.setFormLocation(form, 100, 50)
+		local hideNames = forms.checkbox(form, "Hide found item names", OPTIONS_LAYOUT.CONTROL_X,
+			OPTIONS_LAYOUT.CHECKBOX_Y)
+		forms.setproperty(hideNames, "Width", OPTIONS_LAYOUT.CHECKBOX_WIDTH)
+		forms.setproperty(hideNames, "Checked",
+			TrackerAPI.getExtensionSetting("OverworldItems", "HideFoundNames") == true)
+		local function close()
+			client.unpause()
+			forms.destroy(form)
+		end
+		local function save()
+			hideFoundNames = forms.ischecked(hideNames)
+			TrackerAPI.saveExtensionSetting("OverworldItems", "HideFoundNames", hideFoundNames)
+			close()
+			Program.redraw(true)
+		end
+		forms.button(form, "Save", save, OPTIONS_LAYOUT.CONTROL_X, OPTIONS_LAYOUT.BUTTON_Y,
+			OPTIONS_LAYOUT.SAVE_WIDTH, OPTIONS_LAYOUT.BUTTON_HEIGHT)
+		forms.button(form, "Save and open list", function()
+			save()
+			self.open(TrackerAPI.getMapId())
+		end, OPTIONS_LAYOUT.OPEN_X, OPTIONS_LAYOUT.BUTTON_Y, OPTIONS_LAYOUT.OPEN_WIDTH, OPTIONS_LAYOUT.BUTTON_HEIGHT)
+		forms.button(form, "Cancel", close, OPTIONS_LAYOUT.CANCEL_X, OPTIONS_LAYOUT.BUTTON_Y,
+			OPTIONS_LAYOUT.CANCEL_WIDTH, OPTIONS_LAYOUT.BUTTON_HEIGHT)
 	end
 
 	function self.unload()
