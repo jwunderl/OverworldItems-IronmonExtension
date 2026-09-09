@@ -559,7 +559,7 @@ local function OverworldItems()
 		lastRenewableSteps = renewableSteps
 	end
 
-	local screen = { Buttons = {}, rows = {}, page = 1, wholeArea = true, missingOnly = false }
+	local screen = { Buttons = {}, rows = {}, page = 1, floorOnly = false, missingOnly = false }
 	self.Screen = screen
 	local originalBuild
 	local wrappedBuild
@@ -638,7 +638,7 @@ local function OverworldItems()
 			return
 		end
 		if previousRun ~= runKey then screen.selected, screen.page = nil, 1 end
-		screen.items, screen.unavailable = self.getItems(screen.mapId, screen.wholeArea)
+		screen.items, screen.unavailable = self.getItems(screen.mapId, not screen.floorOnly)
 		screen.rows = {}
 		screen.done, screen.unknown = 0, 0
 		for _, item in ipairs(screen.items) do
@@ -694,7 +694,7 @@ local function OverworldItems()
 				colors[color or "Default text"], shadow)
 		end
 		local route = self.getRouteInfo(screen.mapId)
-		local title = (screen.wholeArea and route.area and route.area.name) or route.name or "Items"
+		local title = (not screen.floorOnly and route.area and route.area.name) or route.name or "Items"
 		text(title, UI_LAYOUT.HEADER_Y, "Intermediate text")
 		if screen.selected then
 			local item = screen.selected
@@ -808,9 +808,9 @@ local function OverworldItems()
 				toggleState = checked(),
 			}
 		end
-		screen.Buttons.Area = checkbox("Area", UI_LAYOUT.LEFT_CONTROL_X, UI_LAYOUT.FILTER_Y,
-			function() return screen.wholeArea end,
-			function() screen.wholeArea = not screen.wholeArea end)
+		screen.Buttons.Floor = checkbox("Floor", UI_LAYOUT.LEFT_CONTROL_X, UI_LAYOUT.FILTER_Y,
+			function() return screen.floorOnly end,
+			function() screen.floorOnly = not screen.floorOnly end)
 		screen.Buttons.Missing = checkbox("Missing", UI_LAYOUT.RIGHT_CONTROL_X, UI_LAYOUT.FILTER_Y,
 			function() return screen.missingOnly end,
 			function() screen.missingOnly = not screen.missingOnly end)
