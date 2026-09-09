@@ -161,17 +161,29 @@ local function OverworldItems()
 
 	local OPTIONS_LAYOUT = {
 		WIDTH = 350,
-		HEIGHT = 140,
+		HEIGHT = 165,
 		CONTROL_X = 12,
 		CHECKBOX_Y = 18,
+		CAROUSEL_Y = 42,
 		CHECKBOX_WIDTH = 310,
-		BUTTON_Y = 65,
+		BUTTON_Y = 92,
 		BUTTON_HEIGHT = 24,
 		SAVE_WIDTH = 60,
 		OPEN_X = 80,
 		OPEN_WIDTH = 150,
 		CANCEL_X = 238,
 		CANCEL_WIDTH = 80,
+	}
+
+	local OVERVIEW_LAYOUT = {
+		HEADER_Y = -2, TRAINERS_X = 54, TRAINERS_WIDTH = 48, ITEMS_X = 104, ITEMS_WIDTH = 36, TAB_HEIGHT = 10,
+		CONTENT_Y = 10, ROW_X = 1, ROW_Y = 28, ROW_HEIGHT = 21,
+		ICON_SIZE = 20, NAME_X = 23, NAME_WIDTH = 84, COUNT_X = 110, COUNT_WIDTH = 25,
+	}
+
+	local CAROUSEL_LAYOUT = {
+		ICON_X = 4, Y = 140, ICON_SIZE = 9, TEXT_WIDTH = 120,
+		CLICK_X = 1, CLICK_WIDTH = 138, CLICK_HEIGHT = 12, FRAMES = 210,
 	}
 
 	local GUIDANCE_ARROW = {
@@ -489,6 +501,47 @@ local function OverworldItems()
 		return items, unavailable
 	end
 
+	function self.getItemAreas(includeCompleted)
+		if not self.syncRun() then return {} end
+		self.indexMaps()
+		local candidates, mapIds = {}, {}
+		for _, trainerId in ipairs(TrainerData and TrainerData.OrderedIds or {}) do
+			local trainer = TrainerData.Trainers[trainerId]
+			if trainer and trainer.routeId and trainer.routeId > 0 then
+				table.insert(candidates, trainer.routeId)
+			end
+		end
+		for mapId in pairs(self.maps) do table.insert(mapIds, mapId) end
+		table.sort(mapIds)
+		for _, mapId in ipairs(mapIds) do table.insert(candidates, mapId) end
+		local areas, checked = {}, {}
+		for _, mapId in ipairs(candidates) do
+			local route = self.getRouteInfo(mapId)
+			local key = route.area or mapId
+			if not checked[key] then
+				checked[key] = true
+				local items, unavailable = self.getItems(mapId, true)
+				local remaining, unknown = 0, unavailable
+				for _, item in ipairs(items) do
+					local collected = self.isCollected(item)
+					if collected ~= true then remaining = remaining + 1 end
+					if collected == nil then unknown = unknown + 1 end
+				end
+				if (#items > 0 or unavailable > 0) and (includeCompleted or remaining > 0 or unknown > 0) then
+					table.insert(areas, {
+						routeId = mapId,
+						name = route.area and route.area.name or route.name,
+						icon = route.icon or (RouteData.Icons and RouteData.Icons.RouteSignWooden),
+						itemsRemaining = remaining,
+						itemsTotal = #items,
+						unknown = unknown,
+					})
+				end
+			end
+		end
+		return areas
+	end
+
 	local function serializeFlags(flagSet)
 		local flags = {}
 		for flagId in pairs(flagSet) do table.insert(flags, flagId) end
@@ -597,6 +650,11 @@ local function OverworldItems()
 	local trainerTab
 	local lastGuidance
 	local hideFoundNames = false
+	local overviewBinding
+	local overviewItems = false
+	local carouselBinding
+	local carouselSummary
+	local showItemCarousel = true
 
 	function self.getItemGuidance(item)
 		if Program.currentScreen ~= screen or not item or not Program.isValidMapLocation()
@@ -734,12 +792,13 @@ local function OverworldItems()
 		end
 	end
 
-	function self.open(mapId)
+	function self.open(mapId, previousScreen)
 		if GameSettings.game ~= RULES.FRLG_GAME_ID then
 			print("Overworld Items supports FireRed and LeafGreen only.")
 			return
 		end
 		screen.mapId = mapId or TrackerAPI.getMapId()
+		screen.previousScreen = previousScreen
 		screen.followMap = screen.mapId == TrackerAPI.getMapId()
 		screen.page, screen.selected = 1, nil
 		Program.changeScreenView(screen)
@@ -839,9 +898,216 @@ local function OverworldItems()
 		end
 	end
 
+	local function installAreaOverview()
+		if overviewBinding or not NotebookTrainersByArea then return end
+		local overview = NotebookTrainersByArea
+		local startX, startY = Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN, Constants.SCREEN.MARGIN
+		local width = Constants.SCREEN.RIGHT_GAP - Constants.SCREEN.MARGIN * 2
+		local binding = {
+			build = overview.buildScreen, draw = overview.drawScreen,
+			seviiVisible = overview.Buttons.CheckboxSevii.isVisible,
+			trainers = overview.Buttons.OverworldItemsTrainers, items = overview.Buttons.OverworldItemsItems,
+		}
+		overviewBinding = binding
+		local function buildItemRows()
+			overview.clearBuiltData()
+			overview.Data.areas = self.getItemAreas(overview.Buttons.CheckboxShowCompleted.toggleState)
+			for index, area in ipairs(overview.Data.areas) do
+				local row = {
+					type = Constants.ButtonTypes.NO_BORDER,
+					area = area, index = index, buttonList = {},
+					dimensions = { width = width - 2, height = OVERVIEW_LAYOUT.ROW_HEIGHT },
+					isVisible = function(button) return overview.Pager.currentPage == button.pageVisible end,
+					includeInGrid = function() return true end,
+					onClick = function()
+						screen.floorOnly = false
+						self.open(area.routeId, overview)
+					end,
+					draw = function(button, shadow)
+						local rowX, rowY, rowWidth, rowHeight = button.box[1], button.box[2], button.box[3], button.box[4]
+						local colors = Theme.COLORS
+						gui.drawRectangle(rowX - 1, rowY - 1, rowWidth + 2, rowHeight, colors[overview.Colors.border])
+						for _, column in ipairs({ 0, OVERVIEW_LAYOUT.ICON_SIZE + 1, OVERVIEW_LAYOUT.COUNT_X }) do
+							gui.drawLine(rowX + column - 1, rowY, rowX + column - 1, rowY + rowHeight - 1, colors[overview.Colors.border])
+						end
+						if area.icon then
+							Drawing.drawButton({ type = Constants.ButtonTypes.IMAGE, image = area.icon:getIconPath(),
+								box = { rowX, rowY, OVERVIEW_LAYOUT.ICON_SIZE, OVERVIEW_LAYOUT.ICON_SIZE } }, shadow)
+						end
+						local currentMap = TrackerAPI.getMapId()
+						local route = self.getRouteInfo(area.routeId)
+						local currentArea = self.getRouteInfo(currentMap).area
+						local nameColor = (area.routeId == currentMap or (route.area and route.area == currentArea))
+							and overview.Colors.highlight or overview.Colors.text
+						local textY = rowY + math.floor((rowHeight - Constants.SCREEN.LINESPACING) / 2) - 1
+						Drawing.drawText(rowX + OVERVIEW_LAYOUT.NAME_X, textY,
+							Utils.shortenText(area.name, OVERVIEW_LAYOUT.NAME_WIDTH - UI_LAYOUT.TEXT_ELLIPSIS_GAP, true), colors[nameColor], shadow)
+						local count = string.format("%d", area.itemsRemaining)
+						if area.unknown > 0 then count = area.itemsRemaining > 0 and count .. "+?" or "?" end
+						count = Utils.shortenText(count, OVERVIEW_LAYOUT.COUNT_WIDTH - UI_LAYOUT.TEXT_ELLIPSIS_GAP, true)
+						local countColor = area.itemsRemaining == 0 and area.unknown == 0 and overview.Colors.positive or overview.Colors.text
+						local countX = rowX + OVERVIEW_LAYOUT.COUNT_X + math.floor((OVERVIEW_LAYOUT.COUNT_WIDTH - Utils.calcWordPixelLength(count)) / 2)
+						Drawing.drawText(countX, textY, count, colors[countColor], shadow)
+					end,
+				}
+				table.insert(overview.Pager.Buttons, row)
+			end
+			overview.Pager:realignButtonsToGrid(startX + OVERVIEW_LAYOUT.ROW_X, startY + OVERVIEW_LAYOUT.ROW_Y, 0, 0)
+		end
+		binding.wrappedBuild = function()
+			if overviewItems then return buildItemRows() end
+			return binding.build()
+		end
+		local function modeButton(label, offset, tabWidth, itemsMode)
+			return {
+				type = Constants.ButtonTypes.NO_BORDER,
+				box = { startX + offset, startY + OVERVIEW_LAYOUT.HEADER_Y, tabWidth, OVERVIEW_LAYOUT.TAB_HEIGHT },
+				draw = function(button, shadow)
+					local selected = overviewItems == itemsMode
+					local box = button.box
+					local colors = Theme.COLORS
+					gui.drawRectangle(box[1], box[2], box[3], box[4], colors[overview.Colors.border], colors[overview.Colors.boxFill])
+					if not selected then gui.drawRectangle(box[1] + 1, box[2] + 1, box[3] - 2, box[4] - 2, Drawing.ColorEffects.DARKEN, Drawing.ColorEffects.DARKEN) end
+					Drawing.drawText(box[1] + Utils.getCenteredTextX(label, box[3]) - 2, box[2], label,
+						colors[selected and overview.Colors.highlight or overview.Colors.text], shadow)
+				end,
+				onClick = function()
+					if overviewItems == itemsMode then return end
+					overviewItems = itemsMode
+					overview.buildScreen()
+					Program.redraw(true)
+				end,
+			}
+		end
+		binding.trainerButton = modeButton("Trainers", OVERVIEW_LAYOUT.TRAINERS_X, OVERVIEW_LAYOUT.TRAINERS_WIDTH, false)
+		binding.itemButton = modeButton("Items", OVERVIEW_LAYOUT.ITEMS_X, OVERVIEW_LAYOUT.ITEMS_WIDTH, true)
+		binding.wrappedSeviiVisible = function() return not overviewItems and binding.seviiVisible() end
+		binding.wrappedDraw = function()
+			Drawing.drawBackgroundAndMargins()
+			overview.refreshButtons()
+			local colors = Theme.COLORS
+			local fill = colors[overview.Colors.boxFill]
+			local shadow = Utils.calcShadowColor(fill)
+			gui.defaultTextBackground(fill)
+			gui.drawRectangle(startX, startY + OVERVIEW_LAYOUT.CONTENT_Y, width,
+				Constants.SCREEN.HEIGHT - startY * 2 - OVERVIEW_LAYOUT.CONTENT_Y, colors[overview.Colors.border], fill)
+			Drawing.drawText(startX, startY + OVERVIEW_LAYOUT.HEADER_Y, "AREAS", colors["Header text"],
+				Utils.calcShadowColor(colors["Main background"]))
+			for _, button in pairs(overview.Buttons) do Drawing.drawButton(button, shadow) end
+			for _, button in ipairs(overview.Pager.Buttons) do Drawing.drawButton(button, shadow) end
+			if overviewItems and #overview.Pager.Buttons == 0 then
+				Drawing.drawText(startX + UI_LAYOUT.TEXT_X, startY + OVERVIEW_LAYOUT.ROW_Y,
+					Program.isValidMapLocation() and "No remaining item areas" or "No active game", colors[overview.Colors.text], shadow)
+			end
+		end
+		overview.buildScreen, overview.drawScreen = binding.wrappedBuild, binding.wrappedDraw
+		overview.Buttons.CheckboxSevii.isVisible = binding.wrappedSeviiVisible
+		overview.Buttons.OverworldItemsTrainers, overview.Buttons.OverworldItemsItems = binding.trainerButton, binding.itemButton
+	end
+
+	local function removeAreaOverview()
+		if not overviewBinding then return end
+		local binding, overview = overviewBinding, NotebookTrainersByArea
+		if overview.buildScreen == binding.wrappedBuild then overview.buildScreen = binding.build end
+		if overview.drawScreen == binding.wrappedDraw then overview.drawScreen = binding.draw end
+		if overview.Buttons.CheckboxSevii.isVisible == binding.wrappedSeviiVisible then overview.Buttons.CheckboxSevii.isVisible = binding.seviiVisible end
+		if overview.Buttons.OverworldItemsTrainers == binding.trainerButton then overview.Buttons.OverworldItemsTrainers = binding.trainers end
+		if overview.Buttons.OverworldItemsItems == binding.itemButton then overview.Buttons.OverworldItemsItems = binding.items end
+		overviewBinding, overviewItems = nil, false
+		overview.buildScreen()
+	end
+
+	local function refreshCarouselSummary()
+		carouselSummary = nil
+		if not carouselBinding or not showItemCarousel or not Program.isValidMapLocation()
+			or Battle.inActiveBattle() or not self.syncRun() then return end
+		local mapId = TrackerAPI.getMapId()
+		local items, unavailable = self.getItems(mapId, true)
+		if #items == 0 and unavailable == 0 then return end
+		local remaining, unknown = 0, unavailable
+		for _, item in ipairs(items) do
+			local collected = self.isCollected(item)
+			if collected ~= true then remaining = remaining + 1 end
+			if collected == nil then unknown = unknown + 1 end
+		end
+		local count = string.format("%d", remaining)
+		if unknown > 0 then count = remaining > 0 and count .. "+?" or "?" end
+		carouselSummary = {
+			mapId = mapId, events = Memory.readdword(GameSettings.gMapHeader + MAP_HEADER.EVENTS_OFFSET),
+			text = "Items remaining: " .. count,
+		}
+	end
+
+	local function installItemCarousel()
+		if carouselBinding or not Main.IsOnBizhawk() or not TrackerScreen.CarouselItems then return end
+		local carouselItems = TrackerScreen.CarouselItems
+		local slot = #carouselItems + 1
+		for index, entry in ipairs(carouselItems) do
+			if entry.extensionKey == "OverworldItems" then slot = index break end
+		end
+		local entry = {
+			type = slot, extensionKey = "OverworldItems", framesToShow = CAROUSEL_LAYOUT.FRAMES,
+			canShow = function()
+				return showItemCarousel and carouselSummary ~= nil and GameSettings.game == RULES.FRLG_GAME_ID
+					and Program.isValidMapLocation() and not Battle.inActiveBattle()
+					and carouselSummary.mapId == TrackerAPI.getMapId()
+					and carouselSummary.events == Memory.readdword(GameSettings.gMapHeader + MAP_HEADER.EVENTS_OFFSET)
+			end,
+		}
+		local startX = Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN
+		local button = {
+			type = Constants.ButtonTypes.PIXELIMAGE,
+			image = Constants.PixelImages.POKEBALL_SMALL,
+			iconColors = TrackerScreen.PokeBalls and TrackerScreen.PokeBalls.ColorList,
+			textColor = "Lower box text",
+			box = { startX + CAROUSEL_LAYOUT.ICON_X, CAROUSEL_LAYOUT.Y, CAROUSEL_LAYOUT.ICON_SIZE, CAROUSEL_LAYOUT.ICON_SIZE },
+			clickableArea = { startX + CAROUSEL_LAYOUT.CLICK_X, CAROUSEL_LAYOUT.Y, CAROUSEL_LAYOUT.CLICK_WIDTH, CAROUSEL_LAYOUT.CLICK_HEIGHT },
+			getText = function()
+				return Utils.shortenText(carouselSummary and carouselSummary.text or "", CAROUSEL_LAYOUT.TEXT_WIDTH - UI_LAYOUT.TEXT_ELLIPSIS_GAP, true)
+			end,
+			isVisible = function()
+				return TrackerScreen.CarouselItems[TrackerScreen.carouselIndex] == entry and entry:canShow()
+			end,
+			onClick = function()
+				if not entry:canShow() then return end
+				screen.floorOnly = false
+				self.open(TrackerAPI.getMapId(), TrackerScreen)
+			end,
+		}
+		entry.getContentList = function() return { button } end
+		carouselBinding = { entry = entry, button = button, previousButton = TrackerScreen.Buttons.OverworldItemsSummary }
+		carouselItems[slot] = entry
+		TrackerScreen.Buttons.OverworldItemsSummary = button
+		refreshCarouselSummary()
+	end
+
+	local function removeItemCarousel()
+		if not carouselBinding then return end
+		local binding = carouselBinding
+		if TrackerScreen.Buttons.OverworldItemsSummary == binding.button then
+			TrackerScreen.Buttons.OverworldItemsSummary = binding.previousButton
+		end
+		for index, entry in ipairs(TrackerScreen.CarouselItems) do
+			if entry == binding.entry then
+				if TrackerScreen.carouselIndex == index then TrackerScreen.carouselIndex = 1 end
+				if index == #TrackerScreen.CarouselItems then
+					table.remove(TrackerScreen.CarouselItems, index)
+				else
+					TrackerScreen.CarouselItems[index] = {
+						type = index, extensionKey = "OverworldItems", framesToShow = 0,
+						canShow = function() return false end, getContentList = function() return {} end,
+					}
+				end
+				break
+			end
+		end
+		carouselBinding, carouselSummary = nil, nil
+	end
+
 	function self.startup()
 		if originalBuild or GameSettings.game ~= RULES.FRLG_GAME_ID then return end
 		hideFoundNames = TrackerAPI.getExtensionSetting("OverworldItems", "HideFoundNames") == true
+		showItemCarousel = TrackerAPI.getExtensionSetting("OverworldItems", "ShowItemCarousel") ~= false
 		local startX = Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN
 		local startY = Constants.SCREEN.MARGIN
 		local width = Constants.SCREEN.RIGHT_GAP - Constants.SCREEN.MARGIN * 2
@@ -894,6 +1160,7 @@ local function OverworldItems()
 			local mapId = screen.mapId or TrackerAPI.getMapId()
 			local route = self.getRouteInfo(mapId)
 			if TrainersOnRouteScreen.buildScreen(route.trainerRouteId or mapId) then
+				if screen.previousScreen then TrainersOnRouteScreen.previousScreen = screen.previousScreen end
 				Program.changeScreenView(TrainersOnRouteScreen)
 			else
 				Program.changeScreenView(TrackerScreen)
@@ -989,6 +1256,13 @@ local function OverworldItems()
 				screen.selected = nil
 				screen.refreshButtons()
 				Program.redraw(true)
+			elseif screen.previousScreen then
+				local previous = screen.previousScreen
+				local page = previous.Pager and previous.Pager.currentPage
+				if previous.buildScreen then previous.buildScreen() end
+				if page then previous.Pager.currentPage = math.min(page, previous.Pager.totalPages) end
+				screen.previousScreen = nil
+				Program.changeScreenView(previous)
 			else
 				showTrainers()
 			end
@@ -1011,9 +1285,18 @@ local function OverworldItems()
 		TrainersOnRouteScreen.buildScreen = wrappedBuild
 		if TrainersOnRouteScreen.Data.routeId then wrappedBuild(TrainersOnRouteScreen.Data.routeId) end
 		self.syncRun()
+		installAreaOverview()
+		installItemCarousel()
 	end
 
 	function self.afterProgramDataUpdate()
+		refreshCarouselSummary()
+		if overviewBinding and overviewItems and Program.currentScreen == NotebookTrainersByArea then
+			local page = NotebookTrainersByArea.Pager.currentPage
+			NotebookTrainersByArea.buildScreen()
+			NotebookTrainersByArea.Pager.currentPage = math.min(page, NotebookTrainersByArea.Pager.totalPages)
+			return
+		end
 		if Program.currentScreen ~= screen then
 			self.syncRun()
 			return
@@ -1038,13 +1321,19 @@ local function OverworldItems()
 		forms.setproperty(hideNames, "Width", OPTIONS_LAYOUT.CHECKBOX_WIDTH)
 		forms.setproperty(hideNames, "Checked",
 			TrackerAPI.getExtensionSetting("OverworldItems", "HideFoundNames") == true)
+		local carouselOption = forms.checkbox(form, "Show item count in carousel", OPTIONS_LAYOUT.CONTROL_X, OPTIONS_LAYOUT.CAROUSEL_Y)
+		forms.setproperty(carouselOption, "Width", OPTIONS_LAYOUT.CHECKBOX_WIDTH)
+		forms.setproperty(carouselOption, "Checked", TrackerAPI.getExtensionSetting("OverworldItems", "ShowItemCarousel") ~= false)
 		local function close()
 			client.unpause()
 			forms.destroy(form)
 		end
 		local function save()
 			hideFoundNames = forms.ischecked(hideNames)
+			showItemCarousel = forms.ischecked(carouselOption)
 			TrackerAPI.saveExtensionSetting("OverworldItems", "HideFoundNames", hideFoundNames)
+			TrackerAPI.saveExtensionSetting("OverworldItems", "ShowItemCarousel", showItemCarousel)
+			refreshCarouselSummary()
 			close()
 			Program.redraw(true)
 		end
@@ -1060,6 +1349,8 @@ local function OverworldItems()
 
 	function self.unload()
 		if not originalBuild then return end
+		removeItemCarousel()
+		removeAreaOverview()
 		if TrainersOnRouteScreen.buildScreen == wrappedBuild then TrainersOnRouteScreen.buildScreen = originalBuild end
 		if TrainersOnRouteScreen.Buttons.OverworldItemsItems == itemTab then
 			TrainersOnRouteScreen.Buttons.OverworldItemsItems = nil
