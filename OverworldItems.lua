@@ -112,19 +112,25 @@ local function OverworldItems()
 	local UI_LAYOUT = {
 		TEXT_X = 4,
 		TEXT_RIGHT_PADDING = 4,
+		TEXT_ELLIPSIS_GAP = 1,
 		HEADER_Y = 4,
 		SUMMARY_Y = 29,
 		EMPTY_LIST_Y = 55,
 		ROWS_PER_PAGE = 4,
+		COMPACT_ROWS_PER_PAGE = 6,
 		ROW_X = 3,
 		ROW_RIGHT_PADDING = 3,
 		ROW_START_Y = 55,
 		ROW_PITCH = 20,
-		ROW_HEIGHT = 19,
+		COMPACT_ROW_PITCH = 12,
+		ROW_GAP = 1,
 		ROW_LOCATION_OFFSET_Y = 10,
+		ROW_COLUMN_GAP = 3,
+		ROW_ARROW_OFFSET_Y = 5,
 		TAB_Y = 17,
 		TAB_WIDTH = 62,
 		TAB_HEIGHT = 9,
+		CONTENT_FRAME_INSET = 2,
 		LEFT_CONTROL_X = 4,
 		RIGHT_CONTROL_X = 74,
 		FILTER_Y = 42,
@@ -161,6 +167,7 @@ local function OverworldItems()
 		HEAD_LENGTH = 4,
 		HEAD_HALF_WIDTH = 3,
 		SHADOW_OFFSET = 1,
+		ARRIVED_RADIUS = 1,
 	}
 
 	local RENEWABLE_CHANCES = {
@@ -559,7 +566,10 @@ local function OverworldItems()
 		lastRenewableSteps = renewableSteps
 	end
 
-	local screen = { Buttons = {}, rows = {}, page = 1, floorOnly = false, missingOnly = false }
+	local screen = {
+		Buttons = {}, rows = {}, page = 1, floorOnly = false, missingOnly = false,
+		rowsPerPage = UI_LAYOUT.ROWS_PER_PAGE, rowPitch = UI_LAYOUT.ROW_PITCH,
+	}
 	self.Screen = screen
 	local originalBuild
 	local wrappedBuild
@@ -567,8 +577,7 @@ local function OverworldItems()
 	local trainerTab
 	local lastGuidance
 
-	function self.getSelectedGuidance()
-		local item = screen.selected
+	function self.getItemGuidance(item)
 		if Program.currentScreen ~= screen or not item or not Program.isValidMapLocation()
 			or GameSettings.game ~= RULES.FRLG_GAME_ID or not GameSettings.gMapHeader then
 			return nil
@@ -590,14 +599,25 @@ local function OverworldItems()
 		}
 	end
 
+	function self.getSelectedGuidance()
+		return self.getItemGuidance(screen.selected)
+	end
+
 	function self.updateGuidance()
-		local guidance = self.getSelectedGuidance()
-		local changed = (guidance == nil) ~= (lastGuidance == nil)
-		if guidance and lastGuidance then
-			changed = guidance.deltaX ~= lastGuidance.deltaX or guidance.deltaY ~= lastGuidance.deltaY
+		if Program.currentScreen ~= screen then
+			lastGuidance = nil
+			return
 		end
-		lastGuidance = guidance
-		if changed and Program.currentScreen == screen then Program.redraw(true) end
+		local directions = {}
+		local firstIndex = (screen.page - 1) * screen.rowsPerPage + 1
+		for rowIndex = 1, screen.selected and 1 or screen.rowsPerPage do
+			local item = screen.selected or screen.rows[firstIndex + rowIndex - 1]
+			local guidance = self.getItemGuidance(item)
+			directions[rowIndex] = guidance and string.format("%d,%d", guidance.deltaX, guidance.deltaY) or ""
+		end
+		local nextGuidance = table.concat(directions, ";")
+		if nextGuidance ~= lastGuidance then Program.redraw(true) end
+		lastGuidance = nextGuidance
 	end
 
 	local function drawGuidanceArrow(guidance, centerX, centerY, color, shadow)
@@ -629,6 +649,20 @@ local function OverworldItems()
 		return name
 	end
 
+	local function itemContext(item, route, title)
+		local mapName = self.getRouteInfo(item.mapId).name
+		local context = ""
+		if mapName ~= title then
+			if route.area and route.area.name then
+				local prefix = route.area.name .. " "
+				if mapName:sub(1, #prefix) == prefix then mapName = mapName:sub(#prefix + 1) end
+			end
+			context = mapName
+		end
+		if item.spawnChance then context = string.format("%s%% %s", item.spawnChance, context) end
+		return context
+	end
+
 	function screen.refreshButtons()
 		if not screen.mapId then return end
 		local previousRun = runKey
@@ -647,7 +681,23 @@ local function OverworldItems()
 			if collected == nil then screen.unknown = screen.unknown + 1 end
 			if not screen.missingOnly or not collected then table.insert(screen.rows, item) end
 		end
-		screen.totalPages = math.max(1, math.ceil(#screen.rows / UI_LAYOUT.ROWS_PER_PAGE))
+		local route = self.getRouteInfo(screen.mapId)
+		local title = (not screen.floorOnly and route.area and route.area.name) or route.name or "Items"
+		screen.rowsPerPage, screen.rowPitch = UI_LAYOUT.COMPACT_ROWS_PER_PAGE, UI_LAYOUT.COMPACT_ROW_PITCH
+		for _, item in ipairs(screen.rows) do
+			if itemContext(item, route, title) ~= "" then
+				screen.rowsPerPage, screen.rowPitch = UI_LAYOUT.ROWS_PER_PAGE, UI_LAYOUT.ROW_PITCH
+				break
+			end
+		end
+		for rowIndex = 1, UI_LAYOUT.COMPACT_ROWS_PER_PAGE do
+			local button = screen.Buttons["Row" .. rowIndex]
+			if button then
+				button.box[2] = Constants.SCREEN.MARGIN + UI_LAYOUT.ROW_START_Y + (rowIndex - 1) * screen.rowPitch
+				button.box[4] = screen.rowPitch - UI_LAYOUT.ROW_GAP
+			end
+		end
+		screen.totalPages = math.max(1, math.ceil(#screen.rows / screen.rowsPerPage))
 		screen.page = math.min(screen.page, screen.totalPages)
 		if screen.unavailable > 0 then
 			screen.message = string.format("%s map(s) unreadable", screen.unavailable)
@@ -726,24 +776,37 @@ local function OverworldItems()
 			end
 		else
 			text(screen.message or "No active game", UI_LAYOUT.SUMMARY_Y, "Intermediate text")
-			for rowIndex = 1, UI_LAYOUT.ROWS_PER_PAGE do
-				local item = screen.rows[(screen.page - 1) * UI_LAYOUT.ROWS_PER_PAGE + rowIndex]
+			for rowIndex = 1, screen.rowsPerPage do
+				local item = screen.rows[(screen.page - 1) * screen.rowsPerPage + rowIndex]
 				if item then
-					local offsetY = UI_LAYOUT.ROW_START_Y + (rowIndex - 1) * UI_LAYOUT.ROW_PITCH
+					local offsetY = UI_LAYOUT.ROW_START_Y + (rowIndex - 1) * screen.rowPitch
 					local collected = self.isCollected(item)
 					local mark = collected == nil and "[?]" or (collected and "[x]" or "[ ]")
-					text(mark .. " " .. itemName(item), offsetY, collected and "Positive text" or "Default text")
-					local mapName = self.getRouteInfo(item.mapId).name
-					local location = string.format("(%d,%d)", item.x, item.y)
-					if mapName ~= title then
-						if route.area and route.area.name then
-							local prefix = route.area.name .. " "
-							if mapName:sub(1, #prefix) == prefix then mapName = mapName:sub(#prefix + 1) end
-						end
-						location = mapName .. " " .. location
+					local arrowX = startX + width - UI_LAYOUT.TEXT_RIGHT_PADDING - GUIDANCE_ARROW.HALF_LENGTH
+					local coordinates = string.format("(%d,%d)", item.x, item.y)
+					local coordinateRight = arrowX - GUIDANCE_ARROW.HALF_LENGTH - UI_LAYOUT.ROW_COLUMN_GAP
+					local coordinateX = coordinateRight - Utils.calcWordPixelLength(coordinates)
+					local nameWidth = coordinateX - startX - UI_LAYOUT.TEXT_X - UI_LAYOUT.ROW_COLUMN_GAP
+						- UI_LAYOUT.TEXT_ELLIPSIS_GAP
+					Drawing.drawText(startX + UI_LAYOUT.TEXT_X, startY + offsetY,
+						Utils.shortenText(mark .. " " .. itemName(item), nameWidth, true),
+						colors[collected and "Positive text" or "Default text"], shadow)
+					Drawing.drawText(coordinateX, startY + offsetY, coordinates, colors["Intermediate text"], shadow)
+					local guidance = self.getItemGuidance(item)
+					local arrowY = startY + offsetY + UI_LAYOUT.ROW_ARROW_OFFSET_Y
+					if guidance and guidance.distance > 0 then
+						drawGuidanceArrow(guidance, arrowX, arrowY, colors["Intermediate text"], shadow)
+					elseif guidance then
+						local radius = GUIDANCE_ARROW.ARRIVED_RADIUS
+						gui.drawRectangle(arrowX - radius, arrowY - radius, radius * 2, radius * 2,
+							colors["Intermediate text"], colors["Intermediate text"])
 					end
-					if item.spawnChance then location = string.format("%s%% %s", item.spawnChance, location) end
-					text(location, offsetY + UI_LAYOUT.ROW_LOCATION_OFFSET_Y, "Intermediate text")
+					local location = itemContext(item, route, title)
+					if location ~= "" then
+						Drawing.drawText(startX + UI_LAYOUT.TEXT_X, startY + offsetY + UI_LAYOUT.ROW_LOCATION_OFFSET_Y,
+							Utils.shortenText(location, coordinateRight - startX - UI_LAYOUT.TEXT_X - UI_LAYOUT.TEXT_ELLIPSIS_GAP, true),
+							colors["Intermediate text"], shadow)
+					end
 				end
 			end
 			if #screen.rows == 0 and #(screen.items or {}) > 0 then text("No missing items", UI_LAYOUT.EMPTY_LIST_Y) end
@@ -759,12 +822,48 @@ local function OverworldItems()
 		local startX = Constants.SCREEN.WIDTH + Constants.SCREEN.MARGIN
 		local startY = Constants.SCREEN.MARGIN
 		local width = Constants.SCREEN.RIGHT_GAP - Constants.SCREEN.MARGIN * 2
-		local function tab(label, offsetX, onClick)
+		local function tab(label, offsetX, targetScreen, onClick)
 			return {
 				type = Constants.ButtonTypes.NO_BORDER,
-				text = label,
+				getCustomText = function() return label end,
 				textColor = "Default text",
+				boxColors = { "Upper box border", "Upper box background" },
+				isSelected = false,
 				box = { startX + offsetX, startY + UI_LAYOUT.TAB_Y, UI_LAYOUT.TAB_WIDTH, UI_LAYOUT.TAB_HEIGHT },
+				updateSelf = function(button)
+					button.isSelected = Program.currentScreen == targetScreen
+					button.textColor = button.isSelected and "Intermediate text" or "Default text"
+				end,
+				draw = function(button, shadowcolor)
+					button:updateSelf()
+					local tabX, tabY, tabWidth, tabHeight = button.box[1], button.box[2], button.box[3], button.box[4]
+					local border = Theme.COLORS[button.boxColors[1]]
+					local fill = Theme.COLORS[button.boxColors[2]]
+					gui.drawRectangle(tabX + 1, tabY + 1, tabWidth - 1, tabHeight - 2, fill, fill)
+					if not button.isSelected then
+						gui.drawRectangle(tabX + 1, tabY + 1, tabWidth - 1, tabHeight - 2,
+							Drawing.ColorEffects.DARKEN, Drawing.ColorEffects.DARKEN)
+					end
+					gui.drawLine(tabX + 1, tabY, tabX + tabWidth - 1, tabY, border)
+					gui.drawLine(tabX, tabY + 1, tabX, tabY + tabHeight - 1, border)
+					gui.drawLine(tabX + tabWidth, tabY + 1, tabX + tabWidth, tabY + tabHeight - 1, border)
+					gui.drawLine(tabX + 1, tabY + tabHeight, tabX + tabWidth - 1, tabY + tabHeight,
+						button.isSelected and fill or border)
+					if button.isSelected then
+						local frameLeft = startX + UI_LAYOUT.CONTENT_FRAME_INSET
+						local frameRight = startX + width - UI_LAYOUT.CONTENT_FRAME_INSET
+						local frameTop = tabY + tabHeight
+						local frameBottom = Constants.SCREEN.HEIGHT - startY - UI_LAYOUT.CONTENT_FRAME_INSET
+						gui.drawLine(frameLeft, frameTop, tabX, frameTop, border)
+						gui.drawLine(tabX + tabWidth, frameTop, frameRight, frameTop, border)
+						gui.drawLine(frameLeft, frameTop, frameLeft, frameBottom, border)
+						gui.drawLine(frameRight, frameTop, frameRight, frameBottom, border)
+						gui.drawLine(frameLeft, frameBottom, frameRight, frameBottom, border)
+					end
+					local text = button:getCustomText()
+					Drawing.drawText(tabX + Utils.getCenteredTextX(text, tabWidth) - 2, tabY, text,
+						Theme.COLORS[button.textColor], shadowcolor)
+				end,
 				onClick = onClick,
 			}
 		end
@@ -777,18 +876,16 @@ local function OverworldItems()
 				Program.changeScreenView(TrackerScreen)
 			end
 		end
-		trainerTab = tab("Trainers", UI_LAYOUT.LEFT_CONTROL_X, function() end)
-		trainerTab.textColor = "Intermediate text"
-		itemTab = tab("Items", UI_LAYOUT.RIGHT_CONTROL_X, function() self.open(TrainersOnRouteScreen.Data.routeId) end)
+		trainerTab = tab("Trainers", UI_LAYOUT.LEFT_CONTROL_X, TrainersOnRouteScreen, function() end)
+		itemTab = tab("Items", UI_LAYOUT.RIGHT_CONTROL_X, screen, function() self.open(TrainersOnRouteScreen.Data.routeId) end)
 		TrainersOnRouteScreen.Buttons.OverworldItemsTrainers = trainerTab
 		TrainersOnRouteScreen.Buttons.OverworldItemsItems = itemTab
-		screen.Buttons.Trainers = tab("Trainers", UI_LAYOUT.LEFT_CONTROL_X, showTrainers)
-		screen.Buttons.Items = tab("Items", UI_LAYOUT.RIGHT_CONTROL_X, function()
+		screen.Buttons.Trainers = tab("Trainers", UI_LAYOUT.LEFT_CONTROL_X, TrainersOnRouteScreen, showTrainers)
+		screen.Buttons.Items = tab("Items", UI_LAYOUT.RIGHT_CONTROL_X, screen, function()
 			screen.selected = nil
 			screen.refreshButtons()
 			Program.redraw(true)
 		end)
-		screen.Buttons.Items.textColor = "Intermediate text"
 		local function checkbox(label, offsetX, offsetY, checked, onClick, visible)
 			return {
 				type = Constants.ButtonTypes.CHECKBOX,
@@ -822,18 +919,18 @@ local function OverworldItems()
 			function() self.setCollected(screen.selected, not self.isCollected(screen.selected)) end,
 			function() return screen.selected ~= nil and screen.selected.spawnChance ~= nil end)
 		screen.Buttons.Collected.clickableArea[3] = width - UI_LAYOUT.LEFT_CONTROL_X - UI_LAYOUT.TEXT_RIGHT_PADDING
-		for rowIndex = 1, UI_LAYOUT.ROWS_PER_PAGE do
+		for rowIndex = 1, UI_LAYOUT.COMPACT_ROWS_PER_PAGE do
 			local slot = rowIndex
 			screen.Buttons["Row" .. slot] = {
 				type = Constants.ButtonTypes.NO_BORDER,
 				box = {
-					startX + UI_LAYOUT.ROW_X, startY + UI_LAYOUT.ROW_START_Y + (slot - 1) * UI_LAYOUT.ROW_PITCH,
-					width - UI_LAYOUT.ROW_X - UI_LAYOUT.ROW_RIGHT_PADDING, UI_LAYOUT.ROW_HEIGHT,
+					startX + UI_LAYOUT.ROW_X, startY + UI_LAYOUT.ROW_START_Y + (slot - 1) * screen.rowPitch,
+					width - UI_LAYOUT.ROW_X - UI_LAYOUT.ROW_RIGHT_PADDING, screen.rowPitch - UI_LAYOUT.ROW_GAP,
 				},
-				isVisible = function() return not screen.selected and
-					screen.rows[(screen.page - 1) * UI_LAYOUT.ROWS_PER_PAGE + slot] ~= nil end,
+				isVisible = function() return slot <= screen.rowsPerPage and not screen.selected and
+					screen.rows[(screen.page - 1) * screen.rowsPerPage + slot] ~= nil end,
 				onClick = function()
-					screen.selected = screen.rows[(screen.page - 1) * UI_LAYOUT.ROWS_PER_PAGE + slot]
+					screen.selected = screen.rows[(screen.page - 1) * screen.rowsPerPage + slot]
 					screen.Buttons.Collected.toggleState = self.isCollected(screen.selected)
 					Program.redraw(true)
 				end,
