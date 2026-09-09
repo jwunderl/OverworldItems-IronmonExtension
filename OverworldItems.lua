@@ -250,6 +250,7 @@ local function OverworldItems()
 	local lastFlags = {}
 	local watchedItems = {}
 	local lastRenewableSteps
+	local observedPickups = {}
 
 	local function isRomAddress(address, size)
 		return type(address) == "number" and address >= ROM.START
@@ -269,7 +270,9 @@ local function OverworldItems()
 		local itemId = Memory.readword(address + ITEM_SCRIPT.ITEM_ID_OFFSET)
 		local quantity = Memory.readword(address + ITEM_SCRIPT.QUANTITY_OFFSET)
 		if itemId == 0 or itemId >= ITEM_SCRIPT.VARIABLE_ID_START
-			or quantity == 0 or quantity >= ITEM_SCRIPT.VARIABLE_ID_START then return nil end
+			or quantity == 0 or quantity >= ITEM_SCRIPT.VARIABLE_ID_START then
+			return nil
+		end
 		return itemId, quantity
 	end
 
@@ -297,7 +300,8 @@ local function OverworldItems()
 			or saveBlock + GameSettings.gameVarsOffset > SAVE_DATA.EWRAM_END_EXCLUSIVE then
 			return nil
 		end
-		local value = Memory.readbyte(saveBlock + GameSettings.gameFlagsOffset + math.floor(flagId / SAVE_DATA.BITS_PER_BYTE))
+		local value = Memory.readbyte(saveBlock + GameSettings.gameFlagsOffset +
+		math.floor(flagId / SAVE_DATA.BITS_PER_BYTE))
 		return math.floor(value / 2 ^ (flagId % SAVE_DATA.BITS_PER_BYTE)) % 2 == 1
 	end
 
@@ -322,7 +326,8 @@ local function OverworldItems()
 		for index = 0, objectCount - 1 do
 			local address = objects + index * OBJECT_EVENT.SIZE
 			local itemId, quantity = readItemScript(Memory.readdword(address + OBJECT_EVENT.SCRIPT_OFFSET))
-			local tileX, tileY = Memory.readword(address + OBJECT_EVENT.X_OFFSET), Memory.readword(address + OBJECT_EVENT.Y_OFFSET)
+			local tileX, tileY = Memory.readword(address + OBJECT_EVENT.X_OFFSET),
+				Memory.readword(address + OBJECT_EVENT.Y_OFFSET)
 			if itemId and not isBerry(itemId) and not isExcludedLocation(mapId, "Ball", tileX, tileY) then
 				table.insert(items, {
 					kind = "Ball",
@@ -340,7 +345,8 @@ local function OverworldItems()
 			local address = backgrounds + index * HIDDEN_ITEM.SIZE
 			local kind = Memory.readbyte(address + HIDDEN_ITEM.KIND_OFFSET)
 			local itemId = Memory.readword(address + HIDDEN_ITEM.ITEM_ID_OFFSET)
-			local tileX, tileY = Memory.readword(address + HIDDEN_ITEM.X_OFFSET), Memory.readword(address + HIDDEN_ITEM.Y_OFFSET)
+			local tileX, tileY = Memory.readword(address + HIDDEN_ITEM.X_OFFSET),
+				Memory.readword(address + HIDDEN_ITEM.Y_OFFSET)
 			local packed = Memory.readbyte(address + HIDDEN_ITEM.ATTRIBUTES_OFFSET)
 			if kind >= HIDDEN_ITEM.FIRST_KIND and kind <= HIDDEN_ITEM.LAST_KIND
 				and packed < HIDDEN_ITEM.UNDERFOOT_MASK and not isBerry(itemId)
@@ -410,7 +416,8 @@ local function OverworldItems()
 	function self.getRouteInfo(mapId)
 		if mapId == MAP_IDS.SS_ANNE_KITCHEN then
 			return {
-				name = "S.S. Anne Kitchen", area = (RouteData.Info[MAP_IDS.SS_ANNE_EXTERIOR] or {}).area,
+				name = "S.S. Anne Kitchen",
+				area = (RouteData.Info[MAP_IDS.SS_ANNE_EXTERIOR] or {}).area,
 				trainerRouteId = MAP_IDS.SS_ANNE_EXTERIOR,
 			}
 		elseif mapId == MAP_IDS.UNDERGROUND_EAST_WEST then
@@ -460,11 +467,16 @@ local function OverworldItems()
 		return items, unavailable
 	end
 
-	local function saveCollected()
+	local function serializeFlags(flagSet)
 		local flags = {}
-		for flagId in pairs(self.collected) do table.insert(flags, flagId) end
+		for flagId in pairs(flagSet) do table.insert(flags, flagId) end
 		table.sort(flags)
-		TrackerAPI.saveExtensionSetting("OverworldItems", "CollectedFlags", table.concat(flags, ","))
+		return table.concat(flags, ",")
+	end
+
+	local function saveCollected()
+		TrackerAPI.saveExtensionSetting("OverworldItems", "CollectedFlags", serializeFlags(self.collected))
+		TrackerAPI.saveExtensionSetting("OverworldItems", "ObservedPickupFlags", serializeFlags(observedPickups))
 		TrackerAPI.saveExtensionSetting("OverworldItems", "RunKey", runKey)
 	end
 
@@ -475,15 +487,19 @@ local function OverworldItems()
 			or saveBlock + SAVE_DATA.PLAYER_ID_OFFSET + SAVE_DATA.PLAYER_ID_SIZE > SAVE_DATA.EWRAM_END_EXCLUSIVE then
 			return false
 		end
-		local nextKey = string.format("%s:%s", GameSettings.getRomHash(), Memory.readdword(saveBlock + SAVE_DATA.PLAYER_ID_OFFSET))
+		local nextKey = string.format("%s:%s", GameSettings.getRomHash(),
+			Memory.readdword(saveBlock + SAVE_DATA.PLAYER_ID_OFFSET))
 		if runKey ~= nextKey then
 			runKey = nextKey
 			self.collected = {}
+			observedPickups = {}
 			lastMap, lastFlags, watchedItems = nil, {}, {}
 			self.maps, indexed = {}, false
 			if TrackerAPI.getExtensionSetting("OverworldItems", "RunKey") == runKey then
 				local saved = tostring(TrackerAPI.getExtensionSetting("OverworldItems", "CollectedFlags") or "")
 				for flag in saved:gmatch("%d+") do self.collected[tonumber(flag)] = true end
+				local observed = tostring(TrackerAPI.getExtensionSetting("OverworldItems", "ObservedPickupFlags") or "")
+				for flag in observed:gmatch("%d+") do observedPickups[tonumber(flag)] = true end
 			end
 		end
 		return true
@@ -497,6 +513,11 @@ local function OverworldItems()
 
 	function self.isCollected(item)
 		if item.spawnChance then return self.collected[item.flagId] == true end
+		return self.readPickupFlag(item.flagId)
+	end
+
+	function self.wasCollectedInGame(item)
+		if item.spawnChance then return observedPickups[item.flagId] == true end
 		return self.readPickupFlag(item.flagId)
 	end
 
@@ -517,16 +538,20 @@ local function OverworldItems()
 		end
 		if #watchedItems == 0 then return end
 		local player = Program.getPlayerMapTile()
-		local renewableSteps = Memory.readword(Utils.getSaveBlock1Addr() + GameSettings.gameVarsOffset + SAVE_DATA.RENEWABLE_STEPS_VAR_OFFSET)
+		local renewableSteps = Memory.readword(Utils.getSaveBlock1Addr() + GameSettings.gameVarsOffset +
+		SAVE_DATA.RENEWABLE_STEPS_VAR_OFFSET)
 		for _, item in ipairs(watchedItems) do
 			local flag = self.readPickupFlag(item.flagId)
 			local distance = math.abs(player.x - item.x) + math.abs(player.y - item.y)
-			local scriptFlag = Memory.readword(GameSettings.gSpecialVar_Result + SAVE_DATA.HIDDEN_FLAG_FROM_RESULT_OFFSET)
-			local scriptSuccess = Memory.readword(GameSettings.gSpecialVar_Result + SAVE_DATA.HIDDEN_SUCCESS_FROM_RESULT_OFFSET)
+			local scriptFlag = Memory.readword(GameSettings.gSpecialVar_Result + SAVE_DATA
+			.HIDDEN_FLAG_FROM_RESULT_OFFSET)
+			local scriptSuccess = Memory.readword(GameSettings.gSpecialVar_Result +
+			SAVE_DATA.HIDDEN_SUCCESS_FROM_RESULT_OFFSET)
 			if mapId == item.mapId and flag == true and lastFlags[item.flagId] == false
 				and renewableSteps == lastRenewableSteps and scriptSuccess == SAVE_DATA.SCRIPT_SUCCESS
-				and distance <= SAVE_DATA.PICKUP_RANGE_TILES and scriptFlag == item.flagId and not self.collected[item.flagId] then
+				and distance <= SAVE_DATA.PICKUP_RANGE_TILES and scriptFlag == item.flagId and not observedPickups[item.flagId] then
 				self.collected[item.flagId] = true
+				observedPickups[item.flagId] = true
 				saveCollected()
 			end
 			lastFlags[item.flagId] = flag
@@ -558,7 +583,8 @@ local function OverworldItems()
 		local vertical = deltaY < 0 and "N" or (deltaY > 0 and "S" or "")
 		local horizontal = deltaX < 0 and "W" or (deltaX > 0 and "E" or "")
 		return {
-			deltaX = deltaX, deltaY = deltaY,
+			deltaX = deltaX,
+			deltaY = deltaY,
 			distance = math.abs(deltaX) + math.abs(deltaY),
 			direction = vertical .. horizontal,
 		}
@@ -580,7 +606,7 @@ local function OverworldItems()
 		local tipX, tipY = centerX + unitX * GUIDANCE_ARROW.HALF_LENGTH, centerY + unitY * GUIDANCE_ARROW.HALF_LENGTH
 		local baseX, baseY = tipX - unitX * GUIDANCE_ARROW.HEAD_LENGTH, tipY - unitY * GUIDANCE_ARROW.HEAD_LENGTH
 		local lines = {
-			{ centerX - unitX * GUIDANCE_ARROW.HALF_LENGTH, centerY - unitY * GUIDANCE_ARROW.HALF_LENGTH, tipX, tipY },
+			{ centerX - unitX * GUIDANCE_ARROW.HALF_LENGTH,   centerY - unitY * GUIDANCE_ARROW.HALF_LENGTH,   tipX, tipY },
 			{ baseX - unitY * GUIDANCE_ARROW.HEAD_HALF_WIDTH, baseY + unitX * GUIDANCE_ARROW.HEAD_HALF_WIDTH, tipX, tipY },
 			{ baseX + unitY * GUIDANCE_ARROW.HEAD_HALF_WIDTH, baseY - unitX * GUIDANCE_ARROW.HEAD_HALF_WIDTH, tipX, tipY },
 		}
@@ -595,7 +621,7 @@ local function OverworldItems()
 	end
 
 	local function itemName(item)
-		if not self.isCollected(item) then return item.kind .. " item" end
+		if not self.wasCollectedInGame(item) then return item.kind .. " item" end
 		if item.itemId == RULES.COINS_ITEM_ID then return string.format("Coins x%s", item.quantity) end
 		local name = TrackerAPI.getItemName(item.itemId)
 		if not name or name == "" then name = "Item #" .. item.itemId end
@@ -695,7 +721,8 @@ local function OverworldItems()
 				text(present == false and "Spawned now" or "Not spawned now", UI_LAYOUT.DETAIL_SPAWN_Y)
 			else
 				local collected = self.isCollected(item)
-				text(collected == nil and "Unknown status" or (collected and "Collected" or "Not collected"), UI_LAYOUT.DETAIL_STATUS_Y)
+				text(collected == nil and "Unknown status" or (collected and "Collected" or "Not collected"),
+					UI_LAYOUT.DETAIL_STATUS_Y)
 			end
 		else
 			text(screen.message or "No active game", UI_LAYOUT.SUMMARY_Y, "Intermediate text")
@@ -781,9 +808,11 @@ local function OverworldItems()
 				toggleState = checked(),
 			}
 		end
-		screen.Buttons.Area = checkbox("Area", UI_LAYOUT.LEFT_CONTROL_X, UI_LAYOUT.FILTER_Y, function() return screen.wholeArea end,
+		screen.Buttons.Area = checkbox("Area", UI_LAYOUT.LEFT_CONTROL_X, UI_LAYOUT.FILTER_Y,
+			function() return screen.wholeArea end,
 			function() screen.wholeArea = not screen.wholeArea end)
-		screen.Buttons.Missing = checkbox("Missing", UI_LAYOUT.RIGHT_CONTROL_X, UI_LAYOUT.FILTER_Y, function() return screen.missingOnly end,
+		screen.Buttons.Missing = checkbox("Missing", UI_LAYOUT.RIGHT_CONTROL_X, UI_LAYOUT.FILTER_Y,
+			function() return screen.missingOnly end,
 			function() screen.missingOnly = not screen.missingOnly end)
 		screen.Buttons.Collected = checkbox("Collected this run", UI_LAYOUT.LEFT_CONTROL_X, UI_LAYOUT.DETAIL_COLLECTED_Y,
 			function() return screen.selected ~= nil and self.isCollected(screen.selected) end,
@@ -798,7 +827,8 @@ local function OverworldItems()
 					startX + UI_LAYOUT.ROW_X, startY + UI_LAYOUT.ROW_START_Y + (slot - 1) * UI_LAYOUT.ROW_PITCH,
 					width - UI_LAYOUT.ROW_X - UI_LAYOUT.ROW_RIGHT_PADDING, UI_LAYOUT.ROW_HEIGHT,
 				},
-				isVisible = function() return not screen.selected and screen.rows[(screen.page - 1) * UI_LAYOUT.ROWS_PER_PAGE + slot] ~= nil end,
+				isVisible = function() return not screen.selected and
+					screen.rows[(screen.page - 1) * UI_LAYOUT.ROWS_PER_PAGE + slot] ~= nil end,
 				onClick = function()
 					screen.selected = screen.rows[(screen.page - 1) * UI_LAYOUT.ROWS_PER_PAGE + slot]
 					screen.Buttons.Collected.toggleState = self.isCollected(screen.selected)
@@ -841,7 +871,8 @@ local function OverworldItems()
 		wrappedBuild = function(mapId)
 			local success = originalBuild(mapId)
 			if success then
-				TrainersOnRouteScreen.Pager:realignButtonsToGrid(startX + UI_LAYOUT.TRAINER_ROWS_X, startY + UI_LAYOUT.TRAINER_ROWS_Y,
+				TrainersOnRouteScreen.Pager:realignButtonsToGrid(startX + UI_LAYOUT.TRAINER_ROWS_X,
+					startY + UI_LAYOUT.TRAINER_ROWS_Y,
 					UI_LAYOUT.TRAINER_COLUMN_GAP, UI_LAYOUT.TRAINER_ROW_GAP)
 				for _, row in ipairs(TrainersOnRouteScreen.Pager.Buttons) do
 					for _, button in ipairs(row.buttonList or {}) do
