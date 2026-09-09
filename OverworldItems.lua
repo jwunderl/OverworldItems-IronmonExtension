@@ -122,9 +122,9 @@ local function OverworldItems()
 		ROW_PITCH = 22,
 		ROW_HEIGHT = 21,
 		ROW_LOCATION_OFFSET_Y = 10,
-		TAB_Y = 20,
+		TAB_Y = 17,
 		TAB_WIDTH = 62,
-		TAB_HEIGHT = 12,
+		TAB_HEIGHT = 9,
 		LEFT_CONTROL_X = 4,
 		RIGHT_CONTROL_X = 74,
 		FILTER_Y = 51,
@@ -148,9 +148,9 @@ local function OverworldItems()
 		PAGE_ARROW_Y = 137,
 		PAGE_ARROW_SIZE = 10,
 		TRAINER_ROWS_X = 7,
-		TRAINER_ROWS_Y = 40,
+		TRAINER_ROWS_Y = 29,
 		TRAINER_COLUMN_GAP = 1,
-		TRAINER_ROW_GAP = 5,
+		TRAINER_ROW_GAP = 3,
 	}
 
 	local GUIDANCE_ARROW = {
