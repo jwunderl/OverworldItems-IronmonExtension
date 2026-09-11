@@ -1,6 +1,6 @@
 local function OverworldItems()
 	local self = {}
-	self.version = "1.0"
+	self.version = "1.1"
 	self.name = "Overworld Items"
 	self.author = "jwunderl"
 	self.description =
