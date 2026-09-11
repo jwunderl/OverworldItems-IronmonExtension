@@ -100,6 +100,7 @@ local function OverworldItems()
 	}
 
 	local MAP_IDS = {
+		ROUTE_2 = 90,
 		SS_ANNE_EXTERIOR = 118,
 		SS_ANNE_KITCHEN = 170,
 		UNDERGROUND_EAST_WEST = 173,
@@ -107,7 +108,11 @@ local function OverworldItems()
 		POKEMON_TOWER_5F = 165,
 	}
 
-	local HEALING_CIRCLE_ITEM = { MAP_ID = MAP_IDS.POKEMON_TOWER_5F, X = 11, Y = 9 }
+	local EXCLUDED_LOCATIONS = {
+		{ MAP_ID = MAP_IDS.ROUTE_2, KIND = "Ball", X = 17, Y = 54 },
+		{ MAP_ID = MAP_IDS.ROUTE_2, KIND = "Ball", X = 17, Y = 64 },
+		{ MAP_ID = MAP_IDS.POKEMON_TOWER_5F, KIND = "Ball", X = 11, Y = 9 },
+	}
 
 	local UI_LAYOUT = {
 		TEXT_X = 4,
@@ -331,8 +336,13 @@ local function OverworldItems()
 	end
 
 	local function isExcludedLocation(mapId, kind, tileX, tileY)
-		return mapId == HEALING_CIRCLE_ITEM.MAP_ID and kind == "Ball"
-			and tileX == HEALING_CIRCLE_ITEM.X and tileY == HEALING_CIRCLE_ITEM.Y
+		for _, location in ipairs(EXCLUDED_LOCATIONS) do
+			if mapId == location.MAP_ID and kind == location.KIND
+				and tileX == location.X and tileY == location.Y then
+				return true
+			end
+		end
+		return false
 	end
 
 	local function isSeviiMap(header)
